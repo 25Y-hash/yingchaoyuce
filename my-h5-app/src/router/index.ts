@@ -4,10 +4,12 @@ import standingsRoutes from './modules/standings'
 import analysisRoutes from './modules/analysis'
 import predictionRoutes from './modules/prediction'
 import historyRoutes from './modules/history'
-
+import homeRoutes from './modules/home'
+import highlightsRoutes from './modules/highlights'
+import audienceRoutes from './modules/audience'
 /**
  * 路由总表 —— 各模块的路由在 modules/ 下各自维护。
- *
+ *S
  * ── 为什么要拆 modules/ ────────────────────────────────
  * 两人协作时如果所有路由都写在这一个文件里，谁加页面谁改它，
  * 天天冲突。拆开后各管各的，这个文件基本不再变动。
@@ -26,12 +28,15 @@ import historyRoutes from './modules/history'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/user' },
+    { path: '/', redirect: '/home' },
+    ...homeRoutes,
     ...userRoutes,
     ...standingsRoutes,
     ...analysisRoutes,
     ...predictionRoutes,
-    ...historyRoutes
+    ...historyRoutes,
+    ...highlightsRoutes,
+    ...audienceRoutes
   ]
 })
 

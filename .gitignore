@@ -15,3 +15,11 @@ Desktop.ini
 # 本机临时/私密文件
 *.local
 .env
+
+# 依赖 / 构建产物
+node_modules/
+dist/
+target/
+
+# 原始素材（体积大，不进 Git）
+Data Collection/

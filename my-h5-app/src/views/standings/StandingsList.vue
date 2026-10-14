@@ -1,168 +1,147 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import TeamCrest from '@/components/TeamCrest.vue'
-import { useHistoryStore } from '@/stores/history'
+import { useStandingsStore } from '@/stores/standings'
+import type { TeamStanding } from '@/types/api'
 
-const historyStore = useHistoryStore()
+const standingsStore = useStandingsStore()
 
-const seasons = computed(() => historyStore.seasons)
-const titles = computed(() => historyStore.titles)
-
-/** 排序方向：'desc' = 从新到旧（33-1），'asc' = 从旧到新（1-33） */
-const sortOrder = ref<'desc' | 'asc'>('desc')
-
-/** 按届数排序后的赛季列表 */
-const sortedSeasons = computed(() => {
-  const list = [...seasons.value]
-  list.sort((a, b) =>
-    sortOrder.value === 'desc' ? b.edition - a.edition : a.edition - b.edition
-  )
-  return list
-})
-
-/** 柱状图归一化 */
-const maxCount = computed(() => Math.max(1, ...titles.value.map((t) => t.count)))
-function barWidth(count: number): string {
-  return `${(count / maxCount.value) * 100}%`
-}
+// ── 三态判定 ──
+const isInitialLoading = computed(
+  () => standingsStore.loading && standingsStore.standings.length === 0
+)
+const isInitialError = computed(
+  () => standingsStore.error !== '' && standingsStore.standings.length === 0
+)
+const isEmpty = computed(
+  () => !standingsStore.loading && !standingsStore.error && standingsStore.standings.length === 0
+)
 
 onMounted(() => {
-  Promise.all([historyStore.loadSeasons(), historyStore.loadTitleCounts()]).catch(() => {})
+  standingsStore.loadStandings().catch(() => {})
 })
 
-function retry() {
-  Promise.all([historyStore.loadSeasons(), historyStore.loadTitleCounts()]).catch(() => {
-    ElMessage.error('仍然加载失败')
-  })
+function onRetry() {
+  standingsStore.loadStandings().catch(() => {})
+}
+
+async function onRefresh() {
+  try {
+    await standingsStore.loadStandings()
+    ElMessage.success('已更新')
+  } catch {
+    ElMessage.error('更新失败，请稍后再试')
+  }
+}
+
+/** 分区配置 */
+const zones = computed(() => [
+  { key: 'ucl', title: '欧冠区', teams: standingsStore.championsLeagueZone },
+  { key: 'uel', title: '欧联区', teams: standingsStore.europaLeagueZone },
+  { key: 'rel', title: '降级区', teams: standingsStore.relegationZone }
+])
+
+/** 队徽降级策略 */
+function rankBadgeClass(team: TeamStanding) {
+  if (team.rank <= 6) return 'badge badge--ucl'
+  if (team.rank <= 17) return 'badge badge--uel'
+  return 'badge badge--rel'
+}
+
+/** 点击某队，弹窗显示详情 */
+const selectedTeam = ref<TeamStanding | null>(null)
+const dialogVisible = ref(false)
+
+function onRowClick(team: TeamStanding) {
+  selectedTeam.value = team
+  dialogVisible.value = true
 }
 </script>
 
 <template>
   <div class="page">
-    <div class="page-head">
+    <header class="titlebar">
       <div>
-        <h2 class="title">历史回顾</h2>
-        <p class="subtitle">
-          {{ historyStore.editionRange ? `历届战绩（${historyStore.editionRange}）` : '历届战绩' }}
-        </p>
+        <h1 class="title">当前积分排名</h1>
+        <p v-if="standingsStore.roundSummary" class="subtitle">{{ standingsStore.roundSummary }}</p>
       </div>
+      <div class="titlebar__side">
+        <el-button
+          class="refresh-btn"
+          :loading="standingsStore.refreshing"
+          :disabled="standingsStore.loading"
+          @click="onRefresh"
+        >
+          刷新
+        </el-button>
+        <div class="legend">
+          <span class="legend__item"><i class="dot dot--ucl" />欧冠区</span>
+          <span class="legend__item"><i class="dot dot--uel" />欧联区</span>
+          <span class="legend__item"><i class="dot dot--rel" />降级区</span>
+        </div>
+      </div>
+    </header>
+
+    <div v-if="isInitialLoading" class="skeleton">
+      <el-skeleton v-for="n in 8" :key="n" class="skeleton__row" :rows="1" animated />
     </div>
 
-    <div v-if="historyStore.loading">
-      <el-skeleton animated :rows="6" />
-    </div>
-
-    <el-result v-else-if="historyStore.error" icon="error" title="战绩加载失败" :sub-title="historyStore.error">
+    <el-result
+      v-else-if="isInitialError"
+      icon="error"
+      :title="standingsStore.error"
+    >
       <template #extra>
-        <el-button type="primary" @click="retry">重试</el-button>
+        <el-button type="primary" @click="onRetry">重新加载</el-button>
       </template>
     </el-result>
 
-    <template v-else>
-      <!-- ── 1. 英超历届夺冠次数（移到前面） ───────────────── -->
-      <h3 class="sec-title">英超历届夺冠次数（自 1992-93 起）</h3>
-      <el-card shadow="never" class="title-card">
-        <div v-for="(item, i) in titles" :key="item.team.teamName" class="bar-row">
-          <span class="bar-rank">{{ i + 1 }}</span>
-          <TeamCrest
-            :short-name="item.team.shortName"
-            :color-primary="item.team.colorPrimary"
-            :color-secondary="item.team.colorSecondary"
-            :logo-url="item.team.logoUrl"
-            :team-name="item.team.teamName"
-            :size="24"
-          />
-          <span class="bar-name">{{ item.team.teamName }}</span>
-          <span class="bar-track">
-            <span
-              class="bar-fill"
-              :style="{
-                width: barWidth(item.count),
-                background: item.team.colorPrimary
-              }"
-            />
-          </span>
-          <span class="bar-count">{{ item.count }}</span>
-        </div>
-        <p class="bar-note">
-          由 season_history 现算（GROUP BY + COUNT），不单独维护统计字段 ——
-          追加新赛季后本榜自动更新。统计口径为全时期（1992-93 起）。
-        </p>
-      </el-card>
+    <el-empty v-else-if="isEmpty" description="赛季尚未开始，暂无积分数据" />
 
-      <!-- ── 2. 历届战绩（移到后面，带排序切换） ─────────── -->
-      <div class="sec-title-row">
-        <h3 class="sec-title">历届战绩</h3>
-        <el-radio-group v-model="sortOrder" size="small">
-          <el-radio-button value="desc">33 → 1</el-radio-button>
-          <el-radio-button value="asc">1 → 33</el-radio-button>
-        </el-radio-group>
+    <template v-else>
+      <div class="row row--header">
+        <span class="col col--rank">排名</span>
+        <span class="col col--team">球队</span>
+        <span class="col col--num">轮次</span>
+        <span class="col col--num col--wide">胜/平/负</span>
+        <span class="col col--num">进失</span>
+        <span class="col col--num">积分</span>
       </div>
-      <el-table :data="sortedSeasons" border stripe size="small" height="420" class="hist-table">
-        <el-table-column prop="edition" label="届数" width="80" align="center" />
-        <el-table-column prop="seasonLabel" label="赛季" width="100" align="center" />
-        <el-table-column label="冠军" min-width="150">
-          <template #default="{ row }">
-            <div class="cell-team">
-              <TeamCrest
-                :short-name="row.champion.shortName"
-                :color-primary="row.champion.colorPrimary"
-                :color-secondary="row.champion.colorSecondary"
-                :logo-url="row.champion.logoUrl"
-                :team-name="row.champion.teamName"
-                :size="22"
-              />
-              <span class="champion">{{ row.champion.teamName }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="亚军" min-width="140">
-          <template #default="{ row }">
-            <div class="cell-team">
-              <TeamCrest
-                :short-name="row.runnerUp.shortName"
-                :color-primary="row.runnerUp.colorPrimary"
-                :color-secondary="row.runnerUp.colorSecondary"
-                :logo-url="row.runnerUp.logoUrl"
-                :team-name="row.runnerUp.teamName"
-                :size="22"
-              />
-              <span>{{ row.runnerUp.teamName }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="季军" min-width="140">
-          <template #default="{ row }">
-            <div class="cell-team">
-              <TeamCrest
-                :short-name="row.third.shortName"
-                :color-primary="row.third.colorPrimary"
-                :color-secondary="row.third.colorSecondary"
-                :logo-url="row.third.logoUrl"
-                :team-name="row.third.teamName"
-                :size="22"
-              />
-              <span>{{ row.third.teamName }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="殿军" min-width="140">
-          <template #default="{ row }">
-            <div class="cell-team">
-              <TeamCrest
-                :short-name="row.fourth.shortName"
-                :color-primary="row.fourth.colorPrimary"
-                :color-secondary="row.fourth.colorSecondary"
-                :logo-url="row.fourth.logoUrl"
-                :team-name="row.fourth.teamName"
-                :size="22"
-              />
-              <span>{{ row.fourth.teamName }}</span>
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
+
+      <template v-for="zone in zones" :key="zone.key">
+        <div class="zone" :class="`zone--${zone.key}`">{{ zone.title }}</div>
+        <div
+          v-for="team in zone.teams"
+          :key="team.rank"
+          class="row row--clickable"
+          @click="onRowClick(team)"
+        >
+          <span class="col col--rank">
+            <img v-if="team.logoUrl" class="badge-img" :src="team.logoUrl" :alt="team.teamName" />
+            <i v-else :class="rankBadgeClass(team)">{{ team.rank }}</i>
+          </span>
+          <span class="col col--team">{{ team.teamName }}</span>
+          <span class="col col--num">{{ team.played }}</span>
+          <span class="col col--num col--wide">{{ team.win }}/{{ team.draw }}/{{ team.lose }}</span>
+          <span class="col col--num">{{ team.goalsFor }}/{{ team.goalsAgainst }}</span>
+          <span class="col col--num col--points">{{ team.points }}</span>
+        </div>
+      </template>
+
+      <!-- 点击某队，弹出详情 -->
+      <el-dialog v-model="dialogVisible" :title="selectedTeam?.teamName" width="300px">
+        <div v-if="selectedTeam" class="detail">
+          <div class="detail-row"><span>排名</span><span>{{ selectedTeam.rank }}</span></div>
+          <div class="detail-row"><span>球队</span><span>{{ selectedTeam.teamName }}</span></div>
+          <div class="detail-row"><span>轮次</span><span>{{ selectedTeam.played }}</span></div>
+          <div class="detail-row"><span>胜</span><span>{{ selectedTeam.win }}</span></div>
+          <div class="detail-row"><span>平</span><span>{{ selectedTeam.draw }}</span></div>
+          <div class="detail-row"><span>负</span><span>{{ selectedTeam.lose }}</span></div>
+          <div class="detail-row"><span>进球</span><span>{{ selectedTeam.goalsFor }}</span></div>
+          <div class="detail-row"><span>失球</span><span>{{ selectedTeam.goalsAgainst }}</span></div>
+          <div class="detail-row"><span>积分</span><span class="points">{{ selectedTeam.points }}</span></div>
+        </div>
+      </el-dialog>
     </template>
   </div>
 </template>
@@ -171,14 +150,12 @@ function retry() {
 .page {
   position: relative;
   z-index: 0;
+  min-height: 100vh;
+  padding: 0 24px;
+  font-family: "SimSun", "宋体", serif;
   --el-card-bg-color: rgba(255, 255, 255, 0.78);
   --el-fill-color-blank: rgba(255, 255, 255, 0.72);
-  --el-fill-color-lighter: rgba(255, 255, 255, 0.46);
-  --el-table-bg-color: transparent;
-  --el-table-tr-bg-color: rgba(255, 255, 255, 0.62);
-  --el-table-header-bg-color: rgba(255, 255, 255, 0.82);
-  --el-table-row-hover-bg-color: rgba(255, 255, 255, 0.95);
-  font-family: "SimSun", "宋体", serif;   /* ← 加这行 */
+  --el-fill-color-lighter: rgba(255, 255, 255, 0.6);
 }
 
 .page::before {
@@ -189,106 +166,230 @@ function retry() {
   pointer-events: none;
   background-image:
     linear-gradient(rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.42)),
-    url('../../assets/backgrounds/history.jpg');
+    url('../../assets/backgrounds/standings.jpg');
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
 }
 
-.page-head {
-  margin-bottom: 16px;
-}
-.title {
-  margin: 0;
-  font-size: 28px;    /* ← 放大，原来 20px */
-  font-weight: bold;
-}
-.subtitle {
-  margin: 6px 0 0;
-  color: var(--el-text-color-secondary);
-  font-size: 14px;
-}
-.sec-title {
-  font-size: 16px;
-  margin: 22px 0 10px;
-}
-
-/* 排序切换那行：标题 + 单选按钮组 */
-.sec-title-row {
+.titlebar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 12px;
+  padding: 14px 0 10px;
+  border-bottom: 1px solid #ebeef5;
   flex-wrap: wrap;
-  margin: 22px 0 10px;
-}
-.sec-title-row .sec-title {
-  margin: 0;
-}
-
-.hist-table {
-  width: 100%;
-}
-.cell-team {
-  display: flex;
-  align-items: center;
   gap: 8px;
 }
-.champion {
-  font-weight: 600;
-}
-.title-card {
-  padding: 4px 0;
-}
-.bar-row {
+
+.titlebar__side {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 0;
+  gap: 12px;
 }
-.bar-rank {
-  width: 20px;
-  text-align: center;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-.bar-name {
-  width: 84px;
-  font-size: 14px;
-  white-space: nowrap;
-}
-.bar-track {
-  flex: 1;
-  height: 12px;
-  background: var(--el-fill-color-lighter);
-  border-radius: 6px;
-  overflow: hidden;
-  min-width: 80px;
-}
-.bar-fill {
-  display: block;
-  height: 100%;
-  border-radius: 6px;
-  transition: width 0.4s ease;
-}
-.bar-count {
-  width: 32px;
-  text-align: right;
-  font-weight: 700;
-  font-size: 15px;
-}
-.bar-note {
-  margin: 12px 0 0;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.7;
-}
-</style>
 
-<!-- 全局：让 Element Plus 组件也变宋体 -->
-<style>
-.page,
-.page * {
-  font-family: "SimSun", "宋体", serif;
+.title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #909399;
+}
+
+.legend {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: #606266;
+}
+
+.legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dot--ucl { background: #e6a23c; }
+.dot--uel { background: #409eff; }
+.dot--rel { background: #f56c6c; }
+
+.skeleton__row {
+  padding: 12px 0;
+  border-bottom: 1px solid #f2f6fc;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f2f6fc;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.row--header {
+  font-weight: bold;
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 8px 8px 0 0;
+}
+
+/* 可点击的行 */
+.row--clickable {
+  cursor: pointer;
+}
+.row--clickable:hover {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.col--rank {
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.col--team {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.col--num {
+  width: 42px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.col--wide {
+  width: 62px;
+}
+
+.col--points {
+  font-weight: bold;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-style: normal;
+  color: #ffffff;
+}
+
+.badge--ucl { background: #e6a23c; }
+.badge--uel { background: #409eff; }
+.badge--rel { background: #909399; }
+
+.badge-img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: contain;
+}
+
+.zone {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.zone--ucl { background: #e6a23c; }
+.zone--uel { background: #409eff; }
+.zone--rel { background: #f56c6c; }
+
+/* 弹窗详情 */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #f2f6fc;
+  font-size: 14px;
+}
+.detail-row .points {
+  font-weight: bold;
+  color: var(--el-color-primary);
+}
+
+@media (min-width: 768px) {
+  .page {
+    padding: 0 48px;
+  }
+
+  .titlebar {
+    padding: 20px 0 16px;
+  }
+
+  .title {
+    font-size: 50px;
+  }
+
+  .subtitle {
+    font-size: 14px;
+  }
+
+  .legend {
+    gap: 16px;
+    font-size: 13px;
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+  }
+
+  .row:hover {
+    background: rgba(255, 255, 255, 0.88);
+  }
+
+  .col--rank {
+    width: 56px;
+  }
+
+  .col--num {
+    width: 72px;
+  }
+
+  .col--wide {
+    width: 110px;
+  }
+
+  .badge {
+    width: 32px;
+    height: 32px;
+    font-size: 15px;
+  }
+
+  .badge-img {
+    width: 32px;
+    height: 32px;
+  }
+
+  .zone {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .row {
+    font-size: 15px;
+  }
 }
 </style>

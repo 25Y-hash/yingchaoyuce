@@ -1,35 +1,34 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import TeamCrest from '@/components/TeamCrest.vue'
 import { useHistoryStore } from '@/stores/history'
 
-/**
- * 页面5：历史回顾（草图最后一张）
- *
- * 上半部「历届战绩」：届数 / 赛季 / 冠军 / 亚军 / 季军 / 殿军，按届数倒序（最新在最前）。
- * 下半部「英超历届夺冠次数」：全时期（1992-93 起），由 season_history 现算。
- *
- * ── 赛季标签为什么不在这里拼 ──────────────────────────────
- * 接口直接给了 seasonLabel（如 "2024-25"）。
- * 让前端拿 seasonYear=2024 自己拼也可以，但那样「怎么显示赛季」这件事
- * 就散落在每个用到它的地方了 —— 展示格式属于契约，应该由后端统一给出。
- */
 const historyStore = useHistoryStore()
 
 const seasons = computed(() => historyStore.seasons)
 const titles = computed(() => historyStore.titles)
 
-/** 柱状图按最大次数归一化：保证第一名占满，其余按比例，视觉上才可比 */
+/** 排序方向：'desc' = 从新到旧（33-1），'asc' = 从旧到新（1-33） */
+const sortOrder = ref<'desc' | 'asc'>('desc')
+
+/** 按届数排序后的赛季列表 */
+const sortedSeasons = computed(() => {
+  const list = [...seasons.value]
+  list.sort((a, b) =>
+    sortOrder.value === 'desc' ? b.edition - a.edition : a.edition - b.edition
+  )
+  return list
+})
+
+/** 柱状图归一化 */
 const maxCount = computed(() => Math.max(1, ...titles.value.map((t) => t.count)))
 function barWidth(count: number): string {
   return `${(count / maxCount.value) * 100}%`
 }
 
 onMounted(() => {
-  Promise.all([historyStore.loadSeasons(), historyStore.loadTitleCounts()]).catch(() => {
-    /* 首屏错误已进 store.error */
-  })
+  Promise.all([historyStore.loadSeasons(), historyStore.loadTitleCounts()]).catch(() => {})
 })
 
 function retry() {
@@ -61,8 +60,43 @@ function retry() {
     </el-result>
 
     <template v-else>
-      <!-- ── 历届战绩 ─────────────────────────────────────── -->
-      <el-table :data="seasons" border stripe size="small" height="420" class="hist-table">
+      <!-- ── 1. 英超历届夺冠次数（移到前面） ───────────────── -->
+      <h3 class="sec-title">英超历届夺冠次数（自 1992-93 起）</h3>
+      <el-card shadow="never" class="title-card">
+        <div v-for="(item, i) in titles" :key="item.team.teamName" class="bar-row">
+          <span class="bar-rank">{{ i + 1 }}</span>
+          <TeamCrest
+            :short-name="item.team.shortName"
+            :color-primary="item.team.colorPrimary"
+            :color-secondary="item.team.colorSecondary"
+            :logo-url="item.team.logoUrl"
+            :team-name="item.team.teamName"
+            :size="24"
+          />
+          <span class="bar-name">{{ item.team.teamName }}</span>
+          <span class="bar-track">
+            <span
+              class="bar-fill"
+              :style="{
+                width: barWidth(item.count),
+                background: item.team.colorPrimary
+              }"
+            />
+          </span>
+          <span class="bar-count">{{ item.count }}</span>
+        </div>
+        
+      </el-card>
+
+      <!-- ── 2. 历届战绩（移到后面，带排序切换） ─────────── -->
+      <div class="sec-title-row">
+        <h3 class="sec-title">历届战绩</h3>
+        <el-radio-group v-model="sortOrder" size="small">
+          <el-radio-button value="desc">33 → 1（新到旧）</el-radio-button>
+          <el-radio-button value="asc">1 → 33（旧到新）</el-radio-button>
+        </el-radio-group>
+      </div>
+      <el-table :data="sortedSeasons" border stripe size="small" height="420" class="hist-table">
         <el-table-column prop="edition" label="届数" width="80" align="center" />
         <el-table-column prop="seasonLabel" label="赛季" width="100" align="center" />
         <el-table-column label="冠军" min-width="150">
@@ -126,51 +160,14 @@ function retry() {
           </template>
         </el-table-column>
       </el-table>
-
-      <!-- ── 英超历届夺冠次数（现算，追加赛季自动更新）────── -->
-      <h3 class="sec-title">英超历届夺冠次数（自 1992-93 起）</h3>
-      <el-card shadow="never" class="title-card">
-        <div v-for="(item, i) in titles" :key="item.team.teamName" class="bar-row">
-          <span class="bar-rank">{{ i + 1 }}</span>
-          <TeamCrest
-            :short-name="item.team.shortName"
-            :color-primary="item.team.colorPrimary"
-            :color-secondary="item.team.colorSecondary"
-            :logo-url="item.team.logoUrl"
-            :team-name="item.team.teamName"
-            :size="24"
-          />
-          <span class="bar-name">{{ item.team.teamName }}</span>
-          <span class="bar-track">
-            <span
-              class="bar-fill"
-              :style="{
-                width: barWidth(item.count),
-                background: item.team.colorPrimary
-              }"
-            />
-          </span>
-          <span class="bar-count">{{ item.count }}</span>
-        </div>
-        <p class="bar-note">
-          由 season_history 现算（GROUP BY + COUNT），不单独维护统计字段 ——
-          追加新赛季后本榜自动更新。统计口径为全时期（1992-93 起）。
-        </p>
-      </el-card>
     </template>
   </div>
 </template>
 
 <style scoped>
-/* 建立堆叠上下文：让下方 ::before 那层背景（z-index:-1）
-   正好压在 #app 的白底之上、页面内容之下 */
 .page {
   position: relative;
   z-index: 0;
-
-  /* 白色区域统一降透明度（Element Plus 组件内部读这些变量）。
-     表格单独一组：表格的「白」分散在行 / 表头 / 斑马纹三个变量里，
-     只改一个会得到「表头透了、数据行还是白的」这种半吊子效果。 */
   --el-card-bg-color: rgba(255, 255, 255, 0.78);
   --el-fill-color-blank: rgba(255, 255, 255, 0.72);
   --el-fill-color-lighter: rgba(255, 255, 255, 0.46);
@@ -178,12 +175,9 @@ function retry() {
   --el-table-tr-bg-color: rgba(255, 255, 255, 0.62);
   --el-table-header-bg-color: rgba(255, 255, 255, 0.82);
   --el-table-row-hover-bg-color: rgba(255, 255, 255, 0.95);
+  font-family: "SimSun", "宋体", serif;   /* ← 加这行 */
 }
 
-/* ── 主题背景（历史回顾配色：黄绿）────────────────────────────
- * 固定定位的伪元素铺满视口当壁纸：不参与布局（原有间距不动）、
- * 锚定视口（这张表可以滚很久，随内容拉伸会把图糊掉）、
- * z-index:-1（永远在内容下面）。上面叠白色半透明遮罩保证可读性。 */
 .page::before {
   content: '';
   position: fixed;
@@ -203,17 +197,32 @@ function retry() {
 }
 .title {
   margin: 0;
-  font-size: 20px;
+  font-size: 28px;    /* ← 放大，原来 20px */
+  font-weight: bold;
 }
 .subtitle {
   margin: 6px 0 0;
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: 14px;
 }
 .sec-title {
-  font-size: 15px;
+  font-size: 16px;
   margin: 22px 0 10px;
 }
+
+/* 排序切换那行：标题 + 单选按钮组 */
+.sec-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 22px 0 10px;
+}
+.sec-title-row .sec-title {
+  margin: 0;
+}
+
 .hist-table {
   width: 100%;
 }
@@ -222,7 +231,6 @@ function retry() {
   align-items: center;
   gap: 8px;
 }
-/* 冠军加粗强调：一张战绩表里最重要的一列 */
 .champion {
   font-weight: 600;
 }
@@ -246,7 +254,6 @@ function retry() {
   font-size: 14px;
   white-space: nowrap;
 }
-/* 轨道撑满剩余空间，填充条在其中按归一化比例展开 */
 .bar-track {
   flex: 1;
   height: 12px;
@@ -272,5 +279,13 @@ function retry() {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   line-height: 1.7;
+}
+</style>
+
+<!-- 全局：让 Element Plus 组件也变宋体 -->
+<style>
+.page,
+.page * {
+  font-family: "SimSun", "宋体", serif;
 }
 </style>

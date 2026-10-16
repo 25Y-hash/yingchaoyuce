@@ -3,7 +3,7 @@
     <!-- 第一屏：标题居中 -->
     <section class="hero">
       <h1 class="main-title">英超预测</h1>
-      <p class="sub-title">2025/26 赛季</p>
+      <p class="sub-title">2026/27 赛季</p>
     </section>
 
     <!-- 第二屏：三个模块 -->
